@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Parser Tests</title></head>
+<body>
+<pre id="out"></pre>
+<script src="parsers.js"></script>
+<script>
+// All fixture data is synthetic. It copies the export layouts, not real transactions.
+const P = window.Parsers, res = [];
+const t = (name, fn) => { try { fn(); res.push('ok   ' + name); } catch (e) { res.push('FAIL ' + name + ': ' + e.message); } };
+const eq = (a, b) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(JSON.stringify(a) + ' != ' + JSON.stringify(b)); };
+const throws = (fn, text) => { try { fn(); } catch (e) { if (e.name === 'ParseError' && e.message.includes(text)) return; throw new Error('wrong error: ' + e.message); } throw new Error('did not throw'); };
+
+const rules = [
+  { match: '- 8888', kind: 'cardCharge', issuer: 'isracard8888' },
+  { match: 'ישראכרט', kind: 'cardCharge', issuer: 'isracard' },
+  { match: 'הרשאה כאל', kind: 'cardCharge', issuer: 'cal' },
+  { match: 'משכנתא', kind: 'category', category: 'Mortgage' },
+  { match: 'מעסיק לדוגמה', kind: 'category', category: 'Income: Wage #1' },
+];
+const bank = [['תנועות בחשבון'], ['חשבון:000'], [], ['', 'יתרה', 'תאריך ערך', 'זכות', 'חובה', 'תיאור', 'אסמכתא', 'סוג פעולה', 'תאריך'],
+  ['', '0.00', '10/11/2025', '', '100.50', 'ישראכרט בע"מ', '1', '162', '10/11/2025'],
+  ['', '5.00', '10/11/2025', '', '1,000.25', 'עפ"י הרשאה כאל', '2', '162', '10/11/2025'],
+  ['', '5.00', '10/11/2025', '', '500.00', 'בינלאומי-משכנתא', '3', '162', '10/11/2025'],
+  ['', '5.00', '01/12/2025', '20,000.00', '', 'מעסיק לדוגמה', '4', '222', '01/12/2025'],
+  ['', '5.00', '05/12/2025', '', '800.00', 'משיכת שיק 1', '5', '162', '05/12/2025']];
+const calHead = ['תאריך עסקה', 'שם בית עסק', 'סכום בש"ח', 'כרטיס', 'מועד חיוב', 'סוג עסקה', 'מזהה כרטיס בארנק דיגילטי', 'הנחה', 'הערות'];
+const cal = [['פירוט עסקאות'], calHead,
+  ['1/11/25', 'קפה', '₪ 1,000.25', 'ויזה 1111', '10/11/25', 'רגילה', '', '', ''],
+  ['2/1/26', 'חנות', '-₪ 20.00', 'ויזה 2222', '10/2/26', 'זיכוי', '', '', ''],
+  ['3/1/26', 'רהיטים', '₪ 50.00', 'ויזה 1111', '', 'תשלומים', '', '', 'עסקה ב-12 תשלומים'],
+  ['3/1/26', 'רהיטים', '₪ 50.00', 'ויזה 1111', '', 'תשלומים', '', '', 'עסקה ב-12 תשלומים'],
+  ['4/1/26', 'סופר', '₪ 70.00', 'ויזה 1111', '', 'רכישה רגילה', '', '', 'עסקה בקליטה'],
+  ['', 'סה"כ עסקאות בגיליון זה:', '₪ 1,150.25', 'הסכום אינו כולל', '', '', '', '', '']];
+const isra = total => [['פירוט עסקאות', '', 'נובמבר 2025'], ['קורפוריט - זהב - 9999', '', '', '', '', '', '', '₪ 100.50'], ['על שם בדיקה'], ['לחיוב ב-10.11'], [],
+  ['עסקאות למועד חיוב'], ['תאריך רכישה', 'שם בית עסק', 'סכום עסקה', 'מטבע עסקה', 'סכום חיוב', 'מטבע חיוב', "מס' שובר", 'פירוט נוסף'],
+  ['07.11.25', 'קופה', '100.50', '₪', '100.50', '₪', '111', 'הוראת קבע'],
+  ['23.10.25', 'דמי כרטיס /הנפקה', '17.90', '₪', '0.00', '₪', '222', 'הנחה'],
+  ['', 'סה"כ לחיוב החודש בכרטיס בש"ח', '', '', total, '₪', '', '']];
+
+t('amounts', () => { eq(P.parseAmount('₪ 1,234.50'), 1234.5); eq(P.parseAmount('-₪ 320.00'), -320); eq(P.parseAmount('₪ -114.04'), -114.04); eq(P.parseAmount(''), null); eq(P.parseAmount(12), 12); });
+t('dates', () => { eq(P.parseDate('9/1/26'), '2026-01-09'); eq(P.parseDate('07.10.26'), '2026-10-07'); eq(P.parseDate('02/11/2025'), '2025-11-02'); eq(P.parseDate('junk'), null); });
+t('bank rows', () => { const r = P.parseBank(bank, 'b'); eq(r.length, 5); eq(r[1].amount, 1000.25); eq(r[3].income, 20000); });
+t('bank rules', () => { const r = P.parseBank(bank, 'b').map(x => P.classifyBank(x, rules).kind); eq(r, ['cardCharge', 'cardCharge', 'category', 'category', 'triage']); });
+t('cal rows and footer skipped', () => { const r = P.parseCal(cal, 'c'); eq(r.length, 5); eq(r[1].amount, -20); eq(r[2].payments, 12); eq(r[4].pending, true); eq(r[0].card, '1111'); });
+t('isracard drops waived fee', () => { const r = P.parseIsracard(isra('100.50'), 'i'); eq(r.length, 1); eq(r[0].card, '9999'); eq(r[0].voucher, '111'); });
+t('isracard wrong total fails', () => throws(() => P.parseIsracard(isra('999.00'), 'i'), 'statement says'));
+t('renamed column fails clearly', () => { const c = [cal[0], calHead.map(x => x === 'סכום בש"ח' ? 'סכום חיוב' : x)]; throws(() => P.parseCal(c, 'c'), 'missing columns: סכום בש"ח'); });
+t('bad bank date fails', () => { const b = bank.concat([['', '1', '', '', '5', 'x', '6', '1', 'not a date']]); throws(() => P.parseBank(b, 'b'), 'unreadable date'); });
+t('installments in one file are kept', () => eq(P.dedupe(P.parseCal(cal, 'c')).kept.length, 5));
+t('overlapping files keep one copy', () => { const d = P.dedupe([...P.parseCal(cal, 'a'), ...P.parseCal(cal, 'b')]); eq(d.kept.length, 5); eq(d.duplicates.length, 5); });
+t('partial overlap keeps the higher count', () => { const one = P.parseCal(cal, 'a').filter(x => x.merchant === 'רהיטים').slice(0, 1); const d = P.dedupe([...one, ...P.parseCal(cal, 'b')]); eq(d.kept.filter(x => x.merchant === 'רהיטים').length, 2); });
+t('isracard duplicates match on voucher', () => eq(P.dedupe([...P.parseIsracard(isra('100.50'), 'a'), ...P.parseIsracard(isra('100.50'), 'b')]).kept.length, 1));
+t('pending row replaced by final row', () => { const final = { ...P.parseCal(cal, 'a')[4], chargeDate: '2026-02-10', file: 'b', pending: false }; const d = P.dedupe([P.parseCal(cal, 'a')[4], final]); eq(d.kept.length, 1); eq(d.kept[0].chargeDate, '2026-02-10'); });
+t('reconcile reports a missing export as a gap', () => { const r = P.reconcile(P.parseBank(bank, 'b'), P.parseCal(cal, 'c'), rules); eq(r.find(x => x.issuer === 'cal' && x.month === '2025-11').diff, 0); eq(r.find(x => x.issuer === 'isracard').diff, 100.5); });
+t('isracard statement matches its bank charge', () => { const r = P.reconcile(P.parseBank(bank, 'b'), P.parseIsracard(isra('100.50'), 'i'), rules); eq(r.find(x => x.issuer === 'isracard').diff, 0); });
+t('a card without exports stays apart', () => { const b = bank.concat([['', '0', '02/11/2025', '', '90.00', 'ישראכרט בע"מ - 8888', '7', '162', '02/11/2025']]); const r = P.reconcile(P.parseBank(b, 'b'), P.parseIsracard(isra('100.50'), 'i'), rules); eq(r.find(x => x.issuer === 'isracard').diff, 0); eq(r.find(x => x.issuer === 'isracard8888').diff, 90); });
+
+document.getElementById('out').textContent = res.join('\n') + `\n\n${res.filter(x => x.startsWith('ok')).length}/${res.length} passed`;
+</script>
+</body>
+</html>
