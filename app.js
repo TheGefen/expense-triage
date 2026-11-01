@@ -19,6 +19,8 @@
     const c = db.cards.find(x => String(x.card) === String(t.card));
     return c ? `${c.nickname} ·${t.card}` : `${t.source} ·${t.card}`;
   };
+  // Sends only the merchant name to Google, never the amount or card.
+  const googleLink = (m, label) => `<a class="btn link" href="https://www.google.com/search?q=${encodeURIComponent(m)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   const lastRead = () => (db.config.lastRead ? JSON.parse(db.config.lastRead.value) : null);
 
   function categories() {
@@ -183,8 +185,9 @@
     const needsNote = /^(BIT|PAYBOX|העברה)/i.test(t.merchant) || t.source === 'bank';
 
     return `${head}<div class="card"><div class="sub">${esc(nickname(t))}</div><div class="merchant" dir="auto">${esc(t.merchant)}</div>
-      <div class="amount">${money(Math.abs(total))}${isIncome ? ' in' : ''}</div>
+      <div class="amount">${money(isIncome ? -total : total)}${isIncome ? ' in' : ''}</div>
       <div class="meta"><span>${shortDate(t.date)}</span><span dir="auto">${esc(t.type)}</span></div>
+      <div class="actions" style="margin-top:8px">${googleLink(t.merchant, 'Google it ↗')}</div>
       ${tags.map(x => `<span class="tag" dir="auto">${esc(x)}</span>`).join('')}
       ${needsNote ? `<div style="margin-top:10px"><input id="note" placeholder="Optional note, e.g. who this was for" aria-label="Note" value="${esc(ui.note)}"></div>` : ''}
       ${suggested.length ? `<div class="tagline">Suggested</div><div class="grid">${suggested.map(c => btn(c, 'top')).join('')}</div>` : ''}
@@ -214,7 +217,7 @@
     <div class="card"><input id="search" placeholder="Search merchant, amount, note…" aria-label="Search" value="${esc(ui.search)}">
     <div class="chips">${filters.map(([k, l]) => `<button class="chip ${ui.allFilter === k ? 'on' : ''}" data-act="allFilter" data-v="${k}">${l}</button>`).join('')}</div>
     <div class="scroll"><table><tr><th>Date</th><th>Merchant</th><th>Source</th><th>Category</th><th class="n">₪</th><th></th></tr>
-    ${shown.map(t => `<tr><td>${esc(String(t.date).slice(8))}/${esc(String(t.date).slice(5, 7))}/${esc(String(t.date).slice(2, 4))}</td><td dir="auto">${esc(t.merchant)}${t.userNote ? `<div class="sub" dir="auto">${esc(t.userNote)}</div>` : ''}</td><td>${esc(nickname(t))}</td><td>${status(t)}</td><td class="n">${t.income > 0 ? `+${money(t.income)}` : money(t.amount)}</td>
+    ${shown.map(t => `<tr><td>${esc(String(t.date).slice(8))}/${esc(String(t.date).slice(5, 7))}/${esc(String(t.date).slice(2, 4))}</td><td dir="auto"><a href="https://www.google.com/search?q=${encodeURIComponent(t.merchant)}" target="_blank" rel="noopener noreferrer" title="Google it">${esc(t.merchant)}</a>${t.userNote ? `<div class="sub" dir="auto">${esc(t.userNote)}</div>` : ''}</td><td>${esc(nickname(t))}</td><td>${status(t)}</td><td class="n">${t.income > 0 ? `+${money(t.income)}` : money(t.amount)}</td>
       <td>${ui.editing === t.id ? `<select data-act="setCat" data-id="${esc(t.id)}" aria-label="Category"><option value="">Choose…</option><option value="__new">Back to review</option><option value="__waive">Waive</option>${names.map(n => `<option>${esc(n)}</option>`).join('')}</select>` : `<button class="btn" data-act="edit" data-id="${esc(t.id)}">Edit</button>`}</td></tr>`).join('')}
     </table></div>${rows.length > shown.length ? `<p class="sub">Showing the newest ${shown.length} of ${rows.length}. Search to narrow it down.</p>` : ''}</div>`;
   }
@@ -332,6 +335,7 @@
       <div class="actions"><button class="btn" data-act="skipFile" data-v="${esc(e.file)}">Skip this file</button><button class="btn" data-act="copyErr" data-i="${i}">Copy error</button></div></div>`).join('');
     const status = x => {
       if (x.items === 0 && (x.issuer === 'max' || /\d/.test(x.issuer))) return '<span class="status warnS">Export later</span>';
+      if (x.items === 0) return '<span class="status mute">No card file for this month</span>';
       if (Math.abs(x.diff) < 0.01) return '<span class="status ok">✓ Matches</span>';
       return `<span class="status badS">Differs ${esc(x.diff.toFixed(2))}</span>`;
     };
@@ -371,9 +375,28 @@
     const errs = (lastRead() || { errors: [] }).errors.length;
     nav.innerHTML = PAGES.map(([k, l]) => `<button data-act="page" data-v="${k}" class="${ui.page === k ? 'on' : ''}">${l}${k === 'data' && errs ? ` <span class="badge">${errs}</span>` : ''}</button>`).join('');
     const pages = { triage: pageTriage, all: pageAll, summary: pageSummary, data: pageData, settings: pageSettings };
-    app.innerHTML = banner + pages[ui.page]();
-    drawCharts();
+    // A failing page must say so, and the tabs must keep working, rather than leaving the old page frozen.
+    try {
+      app.innerHTML = banner + pages[ui.page]();
+      drawCharts();
+    } catch (e) {
+      console.error(e);
+      api.log('error', ui.page, e.stack || e.message);
+      app.innerHTML = `${banner}<div class="card alert"><h2>This page hit a problem</h2><p class="sub">The other tabs still work and your data is safe. Please send this message to get it fixed:</p><pre>${esc(`${ui.page}: ${e.stack || e.message}`)}</pre></div>`;
+    }
   }
+
+  function showPage(page) {
+    ui.page = page;
+    ui.editing = null;
+    window.scrollTo(0, 0);
+    if (page !== 'summary') { render(); return; }
+    // Totals are calculated by the Sheet, so fetch them after any new decisions.
+    guarded('Updating totals…', async () => { db.years = (await api.load()).years; });
+  }
+  window.addEventListener('popstate', e => {
+    if (db && !db.needsSetup) showPage((e.state && e.state.page) || 'triage');
+  });
 
   const currentGroup = () => {
     const all = Model.queue(db.tx, ui.card);
@@ -384,12 +407,9 @@
     create: createCopy,
     reread: rereadDrive,
     page: el => {
-      ui.page = el.dataset.v;
-      ui.editing = null;
-      window.scrollTo(0, 0);
-      if (ui.page !== 'summary') { render(); return; }
-      // Totals are calculated by the Sheet, so fetch them after any new decisions.
-      guarded('Updating totals…', async () => { db.years = (await api.load()).years; });
+      // A history entry per tab, so the phone or browser Back button returns to the last tab.
+      if (el.dataset.v !== ui.page) history.pushState({ page: el.dataset.v }, '', `#${el.dataset.v}`);
+      showPage(el.dataset.v);
     },
     card: el => { ui.card = el.dataset.v; render(); },
     toggleAll: () => { ui.showAll = !ui.showAll; render(); },
