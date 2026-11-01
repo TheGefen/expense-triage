@@ -4,6 +4,7 @@
 <body>
 <pre id="out"></pre>
 <script src="parsers.js"></script>
+<script src="model.js"></script>
 <script>
 // All fixture data is synthetic. It copies the export layouts, not real transactions.
 const P = window.Parsers, res = [];
@@ -55,6 +56,22 @@ t('pending row replaced by final row', () => { const final = { ...P.parseCal(cal
 t('reconcile reports a missing export as a gap', () => { const r = P.reconcile(P.parseBank(bank, 'b'), P.parseCal(cal, 'c'), rules); eq(r.find(x => x.issuer === 'cal' && x.month === '2025-11').diff, 0); eq(r.find(x => x.issuer === 'isracard').diff, 100.5); });
 t('isracard statement matches its bank charge', () => { const r = P.reconcile(P.parseBank(bank, 'b'), P.parseIsracard(isra('100.50'), 'i'), rules); eq(r.find(x => x.issuer === 'isracard').diff, 0); });
 t('a card without exports stays apart', () => { const b = bank.concat([['', '0', '02/11/2025', '', '90.00', 'ישראכרט בע"מ - 8888', '7', '162', '02/11/2025']]); const r = P.reconcile(P.parseBank(b, 'b'), P.parseIsracard(isra('100.50'), 'i'), rules); eq(r.find(x => x.issuer === 'isracard').diff, 0); eq(r.find(x => x.issuer === 'isracard8888').diff, 90); });
+
+const M = window.Model;
+const tab = [['Outcome'], ['Type', 'Details', ...M.MONTHS, 'AVG'], ['Essential', 'Medical ', '=57+263', ...Array(11).fill('')], ['', 'Others', 5, ...Array(11).fill('')], ['', 'SUM Essential', '=SUM(C3:C4)'], [], ['Income', '', ...M.MONTHS], ['', 'Others', 9], ['', 'SUM Income', '=SUM(C8:C8)'], ['Summary', '', ...M.MONTHS], ['', 'Incomes', 1]];
+t('year tab rows', () => { const r = M.parseYearTab(tab).rows; eq(r.map(x => x.category), ['Medical', 'Others', 'Income: Others']); eq(r[0].group, 'Essential'); eq(r[0].row, 2); });
+t('formula keeps what the cell had', () => { const [c, o] = M.parseYearTab(tab).rows; const f = M.mergedFormula('=57+263', c, '2025-01'); if (!f.startsWith('=(57+263)+SUMIFS(')) throw new Error(f); if (!f.includes('"m2025-01"') || !f.includes('$H:$H')) throw new Error(f); if (!M.mergedFormula(5, o, '2025-01').startsWith('=5+SUMIFS(')) throw new Error('number'); if (!M.mergedFormula('', o, '2025-01').startsWith('=SUMIFS(')) throw new Error('blank'); });
+t('income uses the income column', () => { const f = M.mergedFormula('', M.parseYearTab(tab).rows[2], '2025-01'); if (!f.includes('$I:$I') || !f.includes('"Income: Others"')) throw new Error(f); });
+t('stored month matches the formula', () => { const [r] = M.newRows(P.parseCal(cal, 'c').slice(0, 1), [], rules); eq(r.month, 'm2025-11'); });
+t('ids stay the same across re-reads', () => { const a = P.parseCal(cal, 'a'); const first = M.newRows(P.dedupe(a).kept, [], rules); eq(M.newRows(P.dedupe(P.parseCal(cal, 'b')).kept, first, rules).length, 0); });
+t('old dates are left out', () => { const old = { source: 'cal', card: '1', date: '2024-12-31', merchant: 'x', amount: 1 }; eq(M.newRows([old], [], rules).length, 0); });
+t('statements already in the tab are not triaged again', () => { const r = M.newRows(P.parseIsracard(isra('100.50'), 'i'), [], rules, [{ source: 'isracard', chargedBefore: '2025-12-01' }]); eq(r[0].status, 'ignored'); eq(M.newRows(P.parseIsracard(isra('100.50'), 'i'), [], rules, [{ source: 'isracard', chargedBefore: '2025-05-01' }])[0].status, 'new'); });
+t('later installments inherit the decision', () => { const [a, b] = P.parseCal(cal, 'c').slice(2, 4); const first = M.newRows([a], [], rules).map(x => ({ ...x, status: 'done', category: 'Furniture' })); const [n] = M.newRows([a, b], first, rules); eq(n.status, 'done'); eq(n.category, 'Furniture'); });
+t('bank rules set status', () => { const r = M.newRows(P.parseBank(bank, 'b'), [], rules); eq(r.map(x => x.status), ['ignored', 'ignored', 'done', 'done', 'new']); eq(r[3].category, 'Income: Wage #1'); });
+t('header line breaks are handled', () => { const c = [cal[0], calHead.map(x => x.replace(' ', '\n')), ...cal.slice(2)]; eq(P.parseCal(c, 'c').length, 5); });
+t('real Excel dates and numbers are handled', () => { const c = [calHead, [new Date(2026, 9, 29), 'x', -12.5, 'ויזה 1111', new Date(2026, 10, 10), 'רגילה', '', '', '']]; const [r] = P.parseCal(c, 'c'); eq(r.date, '2026-10-29'); eq(r.amount, -12.5); eq(r.chargeDate, '2026-11-10'); });
+t('suggestions use own history first', () => { const tx = [{ status: 'done', category: 'Food Out', merchant: 'קפה 12', by: 'app' }, { status: 'new', merchant: 'קפה 34' }]; eq(M.suggest({ merchant: 'קפה 99' }, tx, [{ match: 'קפה', category: 'Groceries' }]).list, ['Food Out', 'Groceries']); });
+t('popular ranks by use', () => { const tx = [{ status: 'done', category: 'A', by: 'app', merchant: 'x' }, { status: 'done', category: 'B', by: 'app', merchant: 'y' }, { status: 'done', category: 'B', by: 'app', merchant: 'z' }]; eq(M.popular(tx, [], ['A', 'B', 'C'], [], 6), ['B', 'A']); eq(M.popular(tx, [], ['A', 'B', 'C'], ['B'], 6), ['A']); });
 
 document.getElementById('out').textContent = res.join('\n') + `\n\n${res.filter(x => x.startsWith('ok')).length}/${res.length} passed`;
 </script>

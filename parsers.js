@@ -11,7 +11,8 @@
     }
   }
 
-  const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[‎‏‪-‮]/g, '').trim());
+  // Real exports have line breaks inside header cells and invisible direction marks.
+  const clean = v => (v === null || v === undefined ? '' : String(v).replace(/[‎‏‪-‮]/g, '').replace(/\s+/g, ' ').trim());
   const round2 = n => Math.round(n * 100) / 100;
 
   function parseAmount(v) {
@@ -169,5 +170,5 @@
     }).sort((a, b) => (a.month + a.issuer).localeCompare(b.month + b.issuer));
   }
 
-  root.Parsers = { ParseError, parseAmount, parseDate, parseBank, parseCal, parseIsracard, dedupe, classifyBank, reconcile };
+  root.Parsers = { ParseError, clean, parseAmount, parseDate, parseBank, parseCal, parseIsracard, dedupe, classifyBank, reconcile };
 })(typeof window !== 'undefined' ? window : globalThis);
