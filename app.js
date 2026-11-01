@@ -367,7 +367,7 @@
   // ---------- Render and events ----------
   function render() {
     const needsSignIn = !db;
-    const setup = db && db.needsSetup;
+    const setup = Boolean(db && db.needsSetup); // classList.toggle flips the class when given undefined
     nav.classList.toggle('hide', needsSignIn || setup);
     const banner = `${DEMO ? '<div class="error">Demo mode: made-up data, not connected to Google.</div>' : ''}${ui.busy ? `<div class="card sub">${esc(ui.busy)}</div>` : ''}${ui.error ? `<div class="error" role="alert">${esc(ui.error)}</div>` : ''}`;
     if (needsSignIn) { app.innerHTML = banner + pageSignIn(); return; }
