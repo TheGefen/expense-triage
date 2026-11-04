@@ -73,6 +73,19 @@ t('real Excel dates and numbers are handled', () => { const c = [calHead, [new D
 t('suggestions use own history first', () => { const tx = [{ status: 'done', category: 'Food Out', merchant: 'קפה 12', by: 'app' }, { status: 'new', merchant: 'קפה 34' }]; eq(M.suggest({ merchant: 'קפה 99' }, tx, [{ match: 'קפה', category: 'Groceries' }]).list, ['Food Out', 'Groceries']); });
 t('popular ranks by use', () => { const tx = [{ status: 'done', category: 'A', by: 'app', merchant: 'x' }, { status: 'done', category: 'B', by: 'app', merchant: 'y' }, { status: 'done', category: 'B', by: 'app', merchant: 'z' }]; eq(M.popular(tx, [], ['A', 'B', 'C'], [], 6), ['B', 'A']); eq(M.popular(tx, [], ['A', 'B', 'C'], ['B'], 6), ['A']); });
 
+t('progress counts purchases, not rows or rules', () => {
+  const tx = [
+    { group: 'a', status: 'done', by: 'app', card: '1', date: '2025-05-02' },
+    { group: 'b', status: 'new', by: '', card: '1', date: '2025-05-03' },
+    { group: 'b', status: 'new', by: '', card: '1', date: '2025-05-03' },
+    { group: 'c', status: 'waived', by: 'app', card: '2', date: '2025-06-01' },
+    { group: 'd', status: 'ignored', by: 'rule', card: 'bank', date: '2025-05-01' },
+  ];
+  eq(M.progress(tx, () => true), { done: 2, total: 3, left: 1 });
+  eq(M.progress(tx, x => x.date.startsWith('2025-05')), { done: 1, total: 2, left: 1 });
+  eq(M.progress(tx, x => x.card === '2'), { done: 1, total: 1, left: 0 });
+});
+
 document.getElementById('out').textContent = res.join('\n') + `\n\n${res.filter(x => x.startsWith('ok')).length}/${res.length} passed`;
 </script>
 </body>

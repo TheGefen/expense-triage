@@ -119,7 +119,7 @@
 
   function queue(tx, card) {
     const groups = new Map();
-    tx.filter(t => t.status === 'new' && (!card || t.card === card)).forEach(t => {
+    tx.filter(t => t.status === 'new' && (!card || String(t.card) === card)).forEach(t => {
       if (!groups.has(t.group)) groups.set(t.group, []);
       groups.get(t.group).push(t);
     });
@@ -160,5 +160,18 @@
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]).filter(c => !exclude.includes(c)).slice(0, n);
   }
 
-  root.Model = { MONTHS, parseYearTab, sumFormula, mergedFormula, parseFiles, withIds, newRows, possibleDuplicates, normMerchant, queue, suggest, popular };
+  // Counts purchases needing a person's decision (installments once), and how many have one.
+  // Rows handled by rules are left out, so progress reflects only manual work.
+  function progress(tx, keep) {
+    const groups = new Map();
+    tx.forEach(t => {
+      if (t.by === 'rule' || !keep(t)) return;
+      groups.set(t.group, t.status !== 'new');
+    });
+    const total = groups.size;
+    const done = [...groups.values()].filter(Boolean).length;
+    return { done, total, left: total - done };
+  }
+
+  root.Model = { MONTHS, progress, parseYearTab, sumFormula, mergedFormula, parseFiles, withIds, newRows, possibleDuplicates, normMerchant, queue, suggest, popular };
 })(typeof window !== 'undefined' ? window : globalThis);

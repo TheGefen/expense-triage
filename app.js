@@ -156,11 +156,19 @@
     const cardsSeen = [...new Set(db.tx.map(t => String(t.card)))];
     const chips = `<div class="chips"><button class="chip ${ui.card ? '' : 'on'}" data-act="card" data-v="">All</button>${cardsSeen.map(c => {
       const t = db.tx.find(x => String(x.card) === c);
-      return `<button class="chip ${ui.card === c ? 'on' : ''}" data-act="card" data-v="${esc(c)}">${esc(nickname(t))}</button>`;
-    }).join('')}</div>`;
-    const totalDecidable = db.tx.filter(t => t.by !== 'rule').length || 1;
-    const pct = Math.round(100 * (1 - db.tx.filter(t => t.status === 'new').length / totalDecidable));
-    const head = `<div class="row"><h1>Triage</h1><span class="sub">${all.length} left to review</span></div>${chips}<div class="progress"><i style="width:${pct}%"></i></div>`;
+      return `<button class="chip ${ui.card === c ? 'on' : ''}" data-act="card" data-v="${esc(c)}">${esc(nickname(t))} <b>${Model.queue(db.tx, c).length}</b></button>`;
+    }).join('')}</div>`.replace('data-v="">All</button>', `data-v="">All <b>${Model.queue(db.tx, '').length}</b></button>`);
+    // Bars follow the purchase on screen: its month, then its year, for the chosen card.
+    const onCard = x => !ui.card || String(x.card) === ui.card;
+    const bar = (label, p) => `<div class="pbar"><span>${esc(label)}</span><div class="progress" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}"><i style="width:${p.total ? Math.round(100 * p.done / p.total) : 0}%"></i></div><span class="sub">${p.done} of ${p.total}</span></div>`;
+    let bars = '';
+    if (q.length) {
+      const d = String(q[0][0].date);
+      const [y, m] = d.split('-');
+      bars = bar(`${Model.MONTHS[Number(m) - 1].slice(0, 3)} ${y}`, Model.progress(db.tx, x => onCard(x) && String(x.date).startsWith(`${y}-${m}`)))
+        + bar(y, Model.progress(db.tx, x => onCard(x) && String(x.date).startsWith(y)));
+    }
+    const head = `<h1>Triage</h1>${bars}${chips}`;
     if (!db.tx.length) return `${head}<div class="card done"><h2>No transactions yet</h2><button class="btn primary" data-act="reread">Read my files</button></div>`;
     if (!q.length) return `${head}<div class="card done"><h2>All done</h2><p class="sub">Nothing left to review here.</p><button class="btn" data-act="undo" ${ui.history.length ? '' : 'disabled'}>← Back</button></div>`;
 
@@ -321,12 +329,41 @@
     document.getElementById('barLegend').innerHTML = groups.map((g, k) => `<li><i style="background:var(--s${k + 1})"></i><span>${esc(g)}</span></li>`).join('');
   }
 
+  // ---------- Progress grid: one row per card, one square per month, number = purchases left ----------
+  function progressGrid() {
+    const years = [...new Set(db.tx.map(t => String(t.date).slice(0, 4)))].filter(y => /^\d{4}$/.test(y)).sort().reverse();
+    if (!years.length) return '';
+    const cards = [...new Set(db.tx.map(t => String(t.card)))];
+    const cell = (label, p) => {
+      if (!p.total) return '<td class="pg-none" aria-label="nothing">·</td>';
+      const text = `${label}: ${p.done} of ${p.total} done`;
+      if (!p.left) return `<td class="pg-done" title="${esc(text)}" aria-label="${esc(text)}">✓</td>`;
+      return `<td class="${p.done ? 'pg-part' : 'pg-todo'}" title="${esc(text)}" aria-label="${esc(text)}">${p.left}</td>`;
+    };
+    const tables = years.map(y => {
+      const rows = cards.map(c => {
+        const name = nickname(db.tx.find(t => String(t.card) === c));
+        const months = Model.MONTHS.map((mn, i) => {
+          const key = `${y}-${String(i + 1).padStart(2, '0')}`;
+          return cell(`${name}, ${mn} ${y}`, Model.progress(db.tx, t => String(t.card) === c && String(t.date).startsWith(key)));
+        });
+        // The name sits on its own line so twelve months fit across a phone.
+        return Model.progress(db.tx, t => String(t.card) === c && String(t.date).startsWith(y)).total
+          ? `<tr><th colspan="12" scope="rowgroup" class="pg-name">${esc(name)}</th></tr><tr>${months.join('')}</tr>` : '';
+      }).join('');
+      return `<h2 style="margin-top:14px">${y}</h2><table class="pgrid"><tr>${Model.MONTHS.map(m => `<th>${m.slice(0, 3)}</th>`).join('')}</tr>${rows}</table>`;
+    }).join('');
+    return `<div class="card"><h2>Progress</h2><p class="sub" style="margin:0">Numbers are purchases left to review.</p>${tables}
+      <div class="pgkey"><span><i class="pg-done"></i>Done</span><span><i class="pg-part"></i>Started</span><span><i class="pg-todo"></i>Not started</span><span>· Nothing that month</span></div></div>`;
+  }
+
   // ---------- Data ----------
   function pageData() {
     const r = lastRead();
     const head = `<h1>Data &amp; refresh</h1><p class="sub">Your bank and card folders are only ever read. All updates go to the app's copy.</p>
       <div class="card row"><div><b>${r ? `Last read: ${new Date(r.at).toLocaleString('en-GB')}` : 'Not read yet'}</b>${r ? `<div class="sub">${r.files} files · ${r.total} transactions · ${r.added} new that time</div>` : ''}</div><button class="btn primary" data-act="reread">Re-read Drive</button></div>`;
-    if (!r) return head;
+    const grid = progressGrid();
+    if (!r) return head + grid;
     const errors = r.errors.map((e, i) => `<div class="card alert"><div class="row"><h2 style="margin:0">⚠ Could not read this file</h2><span class="status badS">Action needed</span></div>
       <p style="margin:8px 0" dir="auto">${esc(e.message)}</p><p class="sub">Nothing from this file was imported. Your other data is safe.</p>
       ${e.found ? `<pre dir="auto">Found: ${esc(e.found.join(' | '))}\nExpected: ${esc(e.expected.join(' | '))}</pre>
@@ -340,7 +377,7 @@
       return `<span class="status badS">Differs ${esc(x.diff.toFixed(2))}</span>`;
     };
     const recon = r.reconcile.slice().reverse().map(x => `<tr><td>${esc(x.month)}</td><td>${esc(x.issuer)}</td><td class="n">${x.bank.toFixed(2)}</td><td class="n">${x.items.toFixed(2)}</td><td>${status(x)}</td></tr>`).join('');
-    return `${head}${errors}
+    return `${head}${errors}${grid}
       <div class="card"><h2>Does each charge add up?</h2><p class="sub" style="margin-top:0">Bank charges compared with the card items behind them. CAL installments have no charge date in the export, so a difference there can be normal.</p>
       <div class="scroll"><table><tr><th>Month</th><th>Card</th><th class="n">Bank</th><th class="n">Items</th><th>Status</th></tr>${recon}</table></div></div>
       <div class="card"><h2>Duplicates</h2><p class="sub" style="margin-top:0">${r.duplicateCount} rows appeared in more than one file and were kept once.</p>
