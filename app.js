@@ -329,6 +329,22 @@
     document.getElementById('barLegend').innerHTML = groups.map((g, k) => `<li><i style="background:var(--s${k + 1})"></i><span>${esc(g)}</span></li>`).join('');
   }
 
+  // ---------- Which cards need new files: the same check as the monthly email ----------
+  function freshnessCard() {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const f = Model.freshness(db.tx, db.rules, today);
+    const names = { max: 'MAX' };
+    const missingName = s => names[s] || String(s).replace(/^([a-z]+)(\d{4})$/, (m, a, b) => `${a === 'isracard' ? 'Isracard' : a.toUpperCase()} ·${b}`);
+    const day = d => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
+    const stale = f.stale.map(c => `<li><b>${esc(nickname(c))}</b>: latest ${day(c.date)}</li>`).join('');
+    return `<div class="card"><h2>Card files</h2>
+      ${stale ? `<p style="margin:0 0 6px"><span class="status warnS">Needs new files</span> latest data is before ${day(f.cutoff)}</p><ul style="margin:0 0 8px;padding-inline-start:20px">${stale}</ul>` : '<p style="margin:0 0 6px"><span class="status ok">✓ All cards up to date</span></p>'}
+      ${f.fresh.length ? `<p class="sub" style="margin:4px 0">Up to date: ${f.fresh.map(c => esc(nickname(c))).join(', ')}</p>` : ''}
+      ${f.missing.length ? `<p class="sub" style="margin:4px 0">No files yet: ${f.missing.map(s => esc(missingName(s))).join(', ')}</p>` : ''}
+      <p class="sub" style="margin:4px 0 0">A reminder email goes out on the 11th of each month.</p></div>`;
+  }
+
   // ---------- Progress grid: one row per card, one square per month, number = purchases left ----------
   function progressGrid() {
     const years = [...new Set(db.tx.map(t => String(t.date).slice(0, 4)))].filter(y => /^\d{4}$/.test(y)).sort().reverse();
@@ -362,7 +378,7 @@
     const r = lastRead();
     const head = `<h1>Data &amp; refresh</h1><p class="sub">Your bank and card folders are only ever read. All updates go to the app's copy.</p>
       <div class="card row"><div><b>${r ? `Last read: ${new Date(r.at).toLocaleString('en-GB')}` : 'Not read yet'}</b>${r ? `<div class="sub">${r.files} files · ${r.total} transactions · ${r.added} new that time</div>` : ''}</div><button class="btn primary" data-act="reread">Re-read Drive</button></div>`;
-    const grid = progressGrid();
+    const grid = freshnessCard() + progressGrid();
     if (!r) return head + grid;
     const errors = r.errors.map((e, i) => `<div class="card alert"><div class="row"><h2 style="margin:0">⚠ Could not read this file</h2><span class="status badS">Action needed</span></div>
       <p style="margin:8px 0" dir="auto">${esc(e.message)}</p><p class="sub">Nothing from this file was imported. Your other data is safe.</p>

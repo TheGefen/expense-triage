@@ -173,5 +173,23 @@
     return { done, total, left: total - done };
   }
 
-  root.Model = { MONTHS, progress, parseYearTab, sumFormula, mergedFormula, parseFiles, withIds, newRows, possibleDuplicates, normMerchant, queue, suggest, popular };
+  // Which sources need new files. Up to date = newest purchase or charge date within a week
+  // before the 1st of this month. Charge dates matter for cards with few purchases.
+  // apps-script/monthly-check.js has a copy of this function; keep the two the same.
+  function freshness(tx, rules, today) {
+    const first = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, 1));
+    const cutoff = new Date(first.getTime() - 7 * 864e5).toISOString().slice(0, 10);
+    const latest = new Map();
+    tx.forEach(t => {
+      const d = [String(t.date || ''), String(t.chargeDate || '')].sort().pop();
+      const k = String(t.card);
+      if (!latest.has(k) || d > latest.get(k).date) latest.set(k, { card: k, source: String(t.source), date: d });
+    });
+    const all = [...latest.values()];
+    const sources = new Set(all.map(x => x.source));
+    const missing = [...new Set(rules.filter(r => r.kind === 'cardCharge' && !sources.has(r.issuer)).map(r => r.issuer))];
+    return { cutoff, stale: all.filter(x => x.date < cutoff), fresh: all.filter(x => x.date >= cutoff), missing };
+  }
+
+  root.Model = { MONTHS, progress, freshness, parseYearTab, sumFormula, mergedFormula, parseFiles, withIds, newRows, possibleDuplicates, normMerchant, queue, suggest, popular };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -5,6 +5,7 @@
 <pre id="out"></pre>
 <script src="parsers.js"></script>
 <script src="model.js"></script>
+<script src="apps-script/monthly-check.js"></script>
 <script>
 // All fixture data is synthetic. It copies the export layouts, not real transactions.
 const P = window.Parsers, res = [];
@@ -84,6 +85,33 @@ t('progress counts purchases, not rows or rules', () => {
   eq(M.progress(tx, () => true), { done: 2, total: 3, left: 1 });
   eq(M.progress(tx, x => x.date.startsWith('2025-05')), { done: 1, total: 2, left: 1 });
   eq(M.progress(tx, x => x.card === '2'), { done: 1, total: 1, left: 0 });
+});
+
+const freshTx = [
+  { card: 'bank', source: 'bank', date: '2026-10-26', chargeDate: '', status: 'ignored', by: 'rule', group: 'b1' },
+  { card: '1111', source: 'cal', date: '2026-10-30', chargeDate: '2026-11-10', status: 'new', by: '', group: 'c1' },
+  { card: '9999', source: 'isracard', date: '2026-09-23', chargeDate: '2026-10-10', status: 'new', by: '', group: 'i1' },
+];
+const freshRules = [...rules, { match: 'מקס', kind: 'cardCharge', issuer: 'max' }];
+t('freshness on the 11th', () => {
+  const f = M.freshness(freshTx, freshRules, '2026-11-11');
+  eq(f.cutoff, '2026-10-25');
+  eq(f.stale.map(x => x.card), ['9999']);
+  eq(f.fresh.map(x => x.card), ['bank', '1111']);
+  eq(f.missing, ['isracard8888', 'max']);
+});
+t('a statement charged this month counts as up to date', () => {
+  const f = M.freshness([...freshTx, { card: '9999', source: 'isracard', date: '2026-10-20', chargeDate: '2026-11-10', status: 'new', group: 'i2' }], freshRules, '2026-11-11');
+  eq(f.stale.length, 0);
+});
+t('email script matches the app and builds the email', () => {
+  eq(freshness(freshTx, freshRules, '2026-11-11'), M.freshness(freshTx, freshRules, '2026-11-11'));
+  const cards = [{ card: '1111', nickname: 'Demo Visa' }, { card: '9999', nickname: 'Demo Isracard' }];
+  const r = buildReport({ tx: freshTx, rules: freshRules, cards, today: '2026-11-11', unreadFiles: [] });
+  eq(r.subject, 'Expenses: 1 card needs new files');
+  if (!r.body.includes('Demo Isracard ·9999: latest 10/10') || !r.body.includes('Up to date: Bank, Demo Visa ·1111') || !r.body.includes('Still to review: 2 purchases') || !r.body.includes('No files yet: Isracard ·8888, MAX')) throw new Error(r.body);
+  const u = buildReport({ tx: freshTx, rules: freshRules, cards, today: '2026-11-11', unreadFiles: ['new.xlsx'] });
+  eq(u.subject, 'Expenses: new files waiting to be read');
 });
 
 document.getElementById('out').textContent = res.join('\n') + `\n\n${res.filter(x => x.startsWith('ok')).length}/${res.length} passed`;
